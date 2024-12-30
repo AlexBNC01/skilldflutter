@@ -1,8 +1,11 @@
+// lib/screens/product_details_screen.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/database_service.dart';
 import '../models/product.dart';
+import '../models/dynamic_field.dart';
+import 'dart:convert';
 
 class ProductDetailsScreen extends StatefulWidget {
   final int productId;
@@ -16,6 +19,7 @@ class ProductDetailsScreen extends StatefulWidget {
 class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   final DatabaseService _db = DatabaseService();
   Map<String, dynamic>? _productDetails;
+  List<DynamicField> _dynamicFields = [];
   bool _isLoading = true;
 
   @override
@@ -26,9 +30,17 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
   Future<void> _loadProductDetails() async {
     final productDetails = await _db.getProductDetails(widget.productId);
-    if (mounted) {
+    if (productDetails != null) {
+      final dynamicFields = await _db.getDynamicFields('products');
       setState(() {
         _productDetails = productDetails;
+        _dynamicFields = dynamicFields;
+        _isLoading = false;
+      });
+    } else {
+      setState(() {
+        _productDetails = null;
+        _dynamicFields = [];
         _isLoading = false;
       });
     }
@@ -58,6 +70,10 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     final createdAt = _productDetails!['createdAt'] != null
         ? DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(_productDetails!['createdAt']))
         : 'Неизвестно';
+
+    final dynamicValues = _productDetails!['dynamicFields'] != null
+        ? Map<String, dynamic>.from(jsonDecode(_productDetails!['dynamicFields']))
+        : {};
 
     return Scaffold(
       appBar: AppBar(title: Text(_productDetails!['name'] as String)),
@@ -150,6 +166,27 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
               )
             else
               const Text('Нет изображений', style: TextStyle(fontSize: 16, color: Colors.grey)),
+
+            const SizedBox(height: 20),
+
+            // Динамические поля
+            if (_dynamicFields.isNotEmpty)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Дополнительные Поля:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  ..._dynamicFields.map((field) {
+                    final value = dynamicValues[field.fieldName] ?? 'Не указано';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4.0),
+                      child: Text('${field.fieldLabel}: $value', style: const TextStyle(fontSize: 16)),
+                    );
+                  }).toList(),
+                ],
+              )
+            else
+              const SizedBox(),
           ],
         ),
       ),

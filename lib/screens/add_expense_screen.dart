@@ -6,6 +6,8 @@ import '../models/product.dart';
 import '../models/expense.dart';
 import '../models/category.dart';
 import '../models/container_model.dart';
+import '../models/dynamic_field.dart';
+import 'dart:convert';
 
 class AddExpenseScreen extends StatefulWidget {
   const AddExpenseScreen({Key? key}) : super(key: key);
@@ -31,7 +33,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   List<Category> _types = [];
   List<Category> _techs = [];
   List<WarehouseContainer> _containers = [];
-  List<Map<String, dynamic>> _dynamicFields = [];
+  List<DynamicField> _dynamicFields = [];
 
   @override
   void initState() {
@@ -57,7 +59,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         _dynamicFields = dynamicFields;
 
         for (var field in _dynamicFields) {
-          dynamicControllers[field['field_name']] = TextEditingController();
+          dynamicControllers[field.fieldName] = TextEditingController();
         }
       });
     } catch (e) {
@@ -143,7 +145,13 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
     final dynamicValues = <String, dynamic>{};
     for (var field in _dynamicFields) {
-      dynamicValues[field['field_name']] = dynamicControllers[field['field_name']]?.text.trim();
+      if (field.fieldType == 'dropdown') {
+        dynamicValues[field.fieldName] = dynamicControllers[field.fieldName]?.text.trim();
+      } else if (field.fieldType == 'number') {
+        dynamicValues[field.fieldName] = int.tryParse(dynamicControllers[field.fieldName]?.text.trim() ?? '');
+      } else { // По умолчанию текстовое поле
+        dynamicValues[field.fieldName] = dynamicControllers[field.fieldName]?.text.trim();
+      }
     }
 
     final expense = Expense(
@@ -196,7 +204,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             TextField(
               controller: _barcodeController,
               decoration: InputDecoration(
-                labelText: 'Штрих-код (необязательно)', // Добавлена подсказка
+                labelText: 'Штрих-код (необязательно)',
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.camera_alt),
                   onPressed: _scanBarcode,
@@ -299,13 +307,36 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 });
               },
             ),
-            const SizedBox(height: 10),
-            // Динамические поля
+            const SizedBox(height: 20),
+            const Text('Дополнительные Поля', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ..._dynamicFields.map((field) {
-              return TextField(
-                controller: dynamicControllers[field['field_name']],
-                decoration: InputDecoration(labelText: field['field_label']),
-              );
+              if (field.fieldType == 'dropdown') {
+                return DropdownButtonFormField<String>(
+                  decoration: InputDecoration(labelText: field.fieldLabel),
+                  items: field.options != null
+                      ? field.options!.map((option) {
+                          return DropdownMenuItem<String>(
+                            value: option,
+                            child: Text(option),
+                          );
+                        }).toList()
+                      : [],
+                  onChanged: (value) {
+                    dynamicControllers[field.fieldName]?.text = value ?? '';
+                  },
+                );
+              } else if (field.fieldType == 'number') {
+                return TextField(
+                  controller: dynamicControllers[field.fieldName],
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(labelText: field.fieldLabel),
+                );
+              } else { // По умолчанию текстовое поле
+                return TextField(
+                  controller: dynamicControllers[field.fieldName],
+                  decoration: InputDecoration(labelText: field.fieldLabel),
+                );
+              }
             }).toList(),
             const SizedBox(height: 20),
             ElevatedButton(

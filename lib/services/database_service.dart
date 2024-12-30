@@ -6,6 +6,7 @@ import '../models/category.dart';
 import '../models/container_model.dart';
 import '../models/product.dart';
 import '../models/expense.dart';
+import '../models/dynamic_field.dart'; // Импорт модели DynamicField
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
@@ -20,7 +21,7 @@ class DatabaseService {
 
     _database = await openDatabase(
       path,
-      version: 19, // Увеличиваем версию для миграции
+      version: 20, // Убедитесь, что версия актуальна
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -36,6 +37,7 @@ class DatabaseService {
   }
 
   Future<void> _onCreate(Database db, int version) async {
+    // Создание таблиц
     await db.execute('''
       CREATE TABLE types (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +83,7 @@ class DatabaseService {
         tech_id INTEGER,
         display_name TEXT,
         number TEXT,
-        barcode TEXT UNIQUE, -- Поле теперь nullable и уникальное
+        barcode TEXT UNIQUE,
         volume REAL,
         created_at TEXT,
         updated_at TEXT,
@@ -105,7 +107,7 @@ class DatabaseService {
         type_id INTEGER,
         tech_id INTEGER,
         container_id INTEGER,
-        barcode TEXT, -- Добавлено поле barcode
+        barcode TEXT,
         FOREIGN KEY(product_id) REFERENCES products(id),
         FOREIGN KEY(category_id) REFERENCES categories(id),
         FOREIGN KEY(type_id) REFERENCES types(id),
@@ -155,32 +157,26 @@ class DatabaseService {
     }
 
     if (oldVersion < 16) { // Новая миграция для таблицы expenses до версии 16
-      await db.execute('''
-        ALTER TABLE expenses ADD COLUMN category_id INTEGER;
-      ''');
+      await db.execute('ALTER TABLE expenses ADD COLUMN category_id INTEGER;');
       print('Added column category_id to expenses');
 
-      await db.execute('''
-        ALTER TABLE expenses ADD COLUMN type_id INTEGER;
-      ''');
+      await db.execute('ALTER TABLE expenses ADD COLUMN type_id INTEGER;');
       print('Added column type_id to expenses');
 
-      await db.execute('''
-        ALTER TABLE expenses ADD COLUMN tech_id INTEGER;
-      ''');
+      await db.execute('ALTER TABLE expenses ADD COLUMN tech_id INTEGER;');
       print('Added column tech_id to expenses');
 
-      await db.execute('''
-        ALTER TABLE expenses ADD COLUMN container_id INTEGER;
-      ''');
+      await db.execute('ALTER TABLE expenses ADD COLUMN container_id INTEGER;');
       print('Added column container_id to expenses');
     }
 
     if (oldVersion < 18) { // Миграция для версии 18
-      await db.execute('''
-        ALTER TABLE expenses ADD COLUMN barcode TEXT;
-      ''');
+      await db.execute('ALTER TABLE expenses ADD COLUMN barcode TEXT;');
       print('Added column barcode to expenses');
+    }
+
+    if (oldVersion < 19) { // Миграция для версии 19 (если необходимо)
+      // Добавьте дополнительные миграции здесь
     }
 
     // Добавьте другие миграции, если необходимо
@@ -188,9 +184,7 @@ class DatabaseService {
     print('Migration completed');
   }
 
-  // Методы для работы с таблицами
-
-  // Types
+  // Методы для типов
   Future<List<Category>> getTypes() async {
     final db = await database;
     try {
@@ -225,7 +219,7 @@ class DatabaseService {
     }
   }
 
-  // Techs
+  // Методы для техников
   Future<List<Category>> getTechs() async {
     final db = await database;
     try {
@@ -260,7 +254,7 @@ class DatabaseService {
     }
   }
 
-  // Containers
+  // Методы для контейнеров
   Future<List<WarehouseContainer>> getContainers() async {
     final db = await database;
     try {
@@ -295,7 +289,7 @@ class DatabaseService {
     }
   }
 
-  // Categories
+  // Методы для категорий
   Future<List<Category>> getCategories() async {
     final db = await database;
     try {
@@ -330,7 +324,7 @@ class DatabaseService {
     }
   }
 
-  // Products
+  // Методы для продуктов
   Future<List<Product>> getProducts({int? containerId}) async {
     final db = await database;
     try {
@@ -388,7 +382,6 @@ class DatabaseService {
     }
   }
 
-  // Новый метод для поиска продукта по штрих-коду
   Future<Product?> getProductByBarcode(String barcode) async {
     final db = await database;
     try {
@@ -418,6 +411,7 @@ class DatabaseService {
       print('Product updated with id: ${product.id}');
     } catch (e) {
       print('Error updating product: $e');
+      rethrow;
     }
   }
 
@@ -465,7 +459,8 @@ class DatabaseService {
           categories.name AS categoryName,
           types.name AS typeName,
           techs.name AS techName,
-          containers.name AS containerName
+          containers.name AS containerName,
+          products.dynamic_fields AS dynamicFields
         FROM products
         LEFT JOIN categories ON products.category_id = categories.id
         LEFT JOIN types ON products.type_id = types.id
@@ -485,7 +480,7 @@ class DatabaseService {
     }
   }
 
-  // Expenses
+  // Методы для расходов
   Future<int> insertExpense(Expense expense) async {
     final db = await database;
     final expenseMap = expense.toMap();
@@ -512,16 +507,54 @@ class DatabaseService {
     }
   }
 
-  // Dynamic Fields
-  Future<int> insertDynamicField(String entity, String fieldName, String fieldLabel, String fieldType) async {
+  Future<Expense?> getExpenseById(int id) async {
     final db = await database;
     try {
-      final id = await db.insert('dynamic_fields', {
-        'entity': entity,
-        'field_name': fieldName,
-        'field_label': fieldLabel,
-        'field_type': fieldType,
-      });
+      final result = await db.query(
+        'expenses',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+      if (result.isNotEmpty) {
+        print('Expense fetched: ${result.first}');
+        return Expense.fromMap(result.first);
+      }
+      return null;
+    } catch (e) {
+      print('Error fetching expense by id: $e');
+      return null;
+    }
+  }
+
+  Future<void> updateExpense(Expense expense) async {
+    final db = await database;
+    final expenseMap = expense.toMap();
+    expenseMap['dynamic_fields'] = _mapToJson(expense.dynamicFields ?? {});
+    try {
+      await db.update('expenses', expenseMap, where: 'id = ?', whereArgs: [expense.id]);
+      print('Expense updated with id: ${expense.id}');
+    } catch (e) {
+      print('Error updating expense: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteExpense(int id) async {
+    final db = await database;
+    try {
+      await db.delete('expenses', where: 'id = ?', whereArgs: [id]);
+      print('Expense deleted with id: $id');
+    } catch (e) {
+      print('Error deleting expense: $e');
+    }
+  }
+
+  // Методы для динамических полей
+  Future<int> insertDynamicField(DynamicField dynamicField) async {
+    final db = await database;
+    try {
+      final id = await db.insert('dynamic_fields', dynamicField.toMap());
       print('Dynamic field inserted with id: $id');
       return id;
     } catch (e) {
@@ -530,22 +563,47 @@ class DatabaseService {
     }
   }
 
-  Future<void> deleteDynamicField(int id) async {
+  Future<void> updateDynamicField(DynamicField dynamicField) async {
     final db = await database;
     try {
-      await db.delete('dynamic_fields', where: 'id = ?', whereArgs: [id]);
-      print('Dynamic field deleted with id: $id');
+      await db.update(
+        'dynamic_fields',
+        dynamicField.toMap(),
+        where: 'id = ?',
+        whereArgs: [dynamicField.id],
+      );
+      print('Dynamic field updated with id: ${dynamicField.id}');
     } catch (e) {
-      print('Error deleting dynamic field: $e');
+      print('Error updating dynamic field: $e');
+      rethrow;
     }
   }
 
-  Future<List<Map<String, dynamic>>> getDynamicFields(String entity) async {
+  Future<void> deleteDynamicField(int id) async {
     final db = await database;
     try {
-      final result = await db.query('dynamic_fields', where: 'entity = ?', whereArgs: [entity]);
+      await db.delete(
+        'dynamic_fields',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      print('Dynamic field deleted with id: $id');
+    } catch (e) {
+      print('Error deleting dynamic field: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<DynamicField>> getDynamicFields(String entity) async {
+    final db = await database;
+    try {
+      final result = await db.query(
+        'dynamic_fields',
+        where: 'entity = ?',
+        whereArgs: [entity],
+      );
       print('Dynamic fields fetched for entity $entity: $result');
-      return result;
+      return result.map((map) => DynamicField.fromMap(map)).toList();
     } catch (e) {
       print('Error fetching dynamic fields: $e');
       return [];

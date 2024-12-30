@@ -1,153 +1,142 @@
-// expense details screen
+// lib/screens/expense_details_screen.dart
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../services/database_service.dart';
 import '../models/expense.dart';
-import 'product_details_screen.dart';
+import '../models/dynamic_field.dart';
+import 'dart:convert';
 
-class ExpenseDetailsScreen extends StatelessWidget {
-  final Expense expense;
+class ExpenseDetailsScreen extends StatefulWidget {
+  final int expenseId;
 
-  const ExpenseDetailsScreen({required this.expense, Key? key}) : super(key: key);
+  const ExpenseDetailsScreen({required this.expenseId, Key? key}) : super(key: key);
+
+  @override
+  State<ExpenseDetailsScreen> createState() => _ExpenseDetailsScreenState();
+}
+
+class _ExpenseDetailsScreenState extends State<ExpenseDetailsScreen> {
+  final DatabaseService _db = DatabaseService();
+  Expense? _expense;
+  List<DynamicField> _dynamicFields = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadExpenseDetails();
+  }
+
+  Future<void> _loadExpenseDetails() async {
+    final expense = await _db.getExpenseById(widget.expenseId);
+    if (expense != null) {
+      final dynamicFields = await _db.getDynamicFields('expenses');
+      setState(() {
+        _expense = expense;
+        _dynamicFields = dynamicFields;
+        _isLoading = false;
+      });
+    } else {
+      setState(() {
+        _expense = null;
+        _dynamicFields = [];
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final formattedDate = DateFormat('dd MMMM yyyy').format(DateTime.parse(expense.date));
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_expense == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Расход не найден')),
+        body: const Center(child: Text('Данный расход не найден')),
+      );
+    }
+
+    // Предполагаем, что _expense.dynamicFields уже Map<String, dynamic>
+    final dynamicValues = _expense!.dynamicFields ?? {};
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Детали расхода'),
-        elevation: 0,
-      ),
-      body: SingleChildScrollView(
-        child: Column(
+      appBar: AppBar(title: const Text('Детали Расхода')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: ListView(
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16.0),
-              decoration: BoxDecoration(
-                color: Theme.of(context).primaryColor.withOpacity(0.1),
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(20),
-                  bottomRight: Radius.circular(20),
+            // Карточка информации
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12.0),
+              ),
+              elevation: 4,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Расход №${_expense!.id}',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Товар ID: ${_expense!.productId}',
+                      style: const TextStyle(fontSize: 18, color: Colors.blue),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Количество: ${_expense!.quantity}',
+                      style: const TextStyle(fontSize: 18),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Дата: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(_expense!.date))}',
+                      style: const TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                    const Divider(height: 20),
+                    if (_expense!.categoryId != null)
+                      Text('Категория ID: ${_expense!.categoryId}', style: const TextStyle(fontSize: 16)),
+                    if (_expense!.typeId != null)
+                      Text('Тип ID: ${_expense!.typeId}', style: const TextStyle(fontSize: 16)),
+                    if (_expense!.techId != null)
+                      Text('Техника ID: ${_expense!.techId}', style: const TextStyle(fontSize: 16)),
+                    if (_expense!.barcode != null)
+                      Text('Штрих-код: ${_expense!.barcode}', style: const TextStyle(fontSize: 16)),
+                  ],
                 ),
               ),
-              child: Column(
+            ),
+
+            const SizedBox(height: 20),
+
+            // Динамические поля
+            if (_dynamicFields.isNotEmpty)
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildInfoCard(
-                    context,
-                    icon: Icons.shopping_cart,
-                    title: 'Товар ID',
-                    value: expense.productId.toString(),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildInfoCard(
-                    context,
-                    icon: Icons.numbers,
-                    title: 'Количество',
-                    value: expense.quantity.toString(),
-                  ),
-                  const SizedBox(height: 12),
-                  _buildInfoCard(
-                    context,
-                    icon: Icons.calendar_today,
-                    title: 'Дата',
-                    value: formattedDate,
-                  ),
-                  if (expense.reason != null && expense.reason!.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    _buildInfoCard(
-                      context,
-                      icon: Icons.info_outline,
-                      title: 'Причина',
-                      value: expense.reason!,
-                    ),
-                  ],
+                  const Text('Дополнительные Поля:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  ..._dynamicFields.map((field) {
+                    final value = dynamicValues[field.fieldName] ?? 'Не указано';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4.0),
+                      child: Text('${field.fieldLabel}: $value', style: const TextStyle(fontSize: 16)),
+                    );
+                  }).toList(),
                 ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ProductDetailsScreen(productId: expense.productId),
-                    ),
-                  );
-                },
-                icon: const Icon(Icons.visibility),
-                label: const Text('Посмотреть карточку товара'),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 50),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  // Добавить функционал для редактирования расхода
-                },
-                icon: const Icon(Icons.edit),
-                label: const Text('Редактировать расход'),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 50),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInfoCard(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          children: [
-            Icon(icon, color: Theme.of(context).primaryColor),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+              )
+            else
+              const SizedBox(),
           ],
         ),
       ),

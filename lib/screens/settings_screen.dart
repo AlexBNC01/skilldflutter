@@ -1,4 +1,4 @@
-// setting_screen
+// lib/screens/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'categories_management_screen.dart';
 import 'container_management_screen.dart';
