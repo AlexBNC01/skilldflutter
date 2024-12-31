@@ -1,4 +1,5 @@
 // lib/services/database_service.dart
+
 import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -21,7 +22,8 @@ class DatabaseService {
 
     _database = await openDatabase(
       path,
-      version: 20, // Убедитесь, что версия актуальна
+      version: 26
+      , // Повышаем версию, чтобы сработала новая миграция
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -36,6 +38,9 @@ class DatabaseService {
     return _database!;
   }
 
+  // ============================================
+  // ============  onCreate  ====================
+  // ============================================
   Future<void> _onCreate(Database db, int version) async {
     // Создание таблиц
     await db.execute('''
@@ -68,6 +73,7 @@ class DatabaseService {
       );
     ''');
 
+    // ====== ВАЖНО: barcode TEXT без UNIQUE ======
     await db.execute('''
       CREATE TABLE products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -83,7 +89,7 @@ class DatabaseService {
         tech_id INTEGER,
         display_name TEXT,
         number TEXT,
-        barcode TEXT UNIQUE,
+        barcode TEXT, -- УБРАЛИ UNIQUE!
         volume REAL,
         created_at TEXT,
         updated_at TEXT,
@@ -135,6 +141,9 @@ class DatabaseService {
     await db.insert('categories', {'name': 'Категория тестовая', 'parent_id': null});
   }
 
+  // ============================================
+  // ============  onUpgrade  ===================
+  // ============================================
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     print('Migrating from version $oldVersion to $newVersion');
 
@@ -151,9 +160,11 @@ class DatabaseService {
     }
 
     if (oldVersion < 15) {
-      // Убедитесь, что barcode уникален
-      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);');
-      print('Created unique index idx_products_barcode on products(barcode)');
+      // Ранее было так:
+      // await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);');
+      // Теперь удаляем этот индекс (т.к. он уникальный).
+      print('Removing UNIQUE index idx_products_barcode on products(barcode)');
+      await db.execute('DROP INDEX IF EXISTS idx_products_barcode');
     }
 
     if (oldVersion < 16) { // Новая миграция для таблицы expenses до версии 16
@@ -175,14 +186,60 @@ class DatabaseService {
       print('Added column barcode to expenses');
     }
 
+    // === Примерно на 21-й версии мы пересоздаём таблицу products без UNIQUE.
+    if (oldVersion < 21) {
+      // Снова: если вы хотите сохранить старые данные, нужен перенос через временную таблицу.
+      // Для простоты — дропаем и создаём заново (ВНИМАНИЕ: УДАЛИТ ВСЕ ТОВАРЫ!)
+      print('Dropping and recreating products table without UNIQUE constraint on barcode');
+
+      // Удаляем таблицу products целиком (данные исчезнут!)
+      await db.execute('DROP TABLE IF EXISTS products');
+
+      // Заново создаём products уже без UNIQUE
+      await db.execute('''
+        CREATE TABLE products (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          price REAL NOT NULL,
+          quantity INTEGER NOT NULL,
+          container_id INTEGER NOT NULL,
+          image_paths TEXT,
+          category_id INTEGER,
+          subcategory_id1 INTEGER,
+          subcategory_id2 INTEGER,
+          type_id INTEGER,
+          tech_id INTEGER,
+          display_name TEXT,
+          number TEXT,
+          barcode TEXT, -- без UNIQUE
+          volume REAL,
+          created_at TEXT,
+          updated_at TEXT,
+          dynamic_fields TEXT,
+          FOREIGN KEY(container_id) REFERENCES containers(id),
+          FOREIGN KEY(category_id) REFERENCES categories(id),
+          FOREIGN KEY(type_id) REFERENCES types(id),
+          FOREIGN KEY(tech_id) REFERENCES techs(id)
+        );
+      ''');
+      print('Recreated products table without UNIQUE barcode constraint');
+    }
+
     if (oldVersion < 19) { // Миграция для версии 19 (если необходимо)
       // Добавьте дополнительные миграции здесь
     }
 
-    // Добавьте другие миграции, если необходимо
-
     print('Migration completed');
   }
+
+  // ==========================
+  // Методы для типов, техников,
+  // контейнеров, категорий, продуктов и т.д.
+  // ==========================
+
+  // Ниже методы без изменений, кроме тех, где мы
+  // удаляем или не создаём UNIQUE INDEX на barcode
+  // --------------------------------------------
 
   // Методы для типов
   Future<List<Category>> getTypes() async {
@@ -348,6 +405,7 @@ class DatabaseService {
     }
   }
 
+  // ======== insertProduct без UNIQUE ========
   Future<int> insertProduct(Product product) async {
     final db = await database;
     final productMap = product.toMap();

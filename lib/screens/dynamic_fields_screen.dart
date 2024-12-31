@@ -1,4 +1,5 @@
 // lib/screens/dynamic_fields_screen.dart
+
 import 'package:flutter/material.dart';
 import '../services/database_service.dart';
 import '../models/dynamic_field.dart';
@@ -118,12 +119,7 @@ class _DynamicFieldsScreenState extends State<DynamicFieldsScreen> {
                       .map((e) => e.trim())
                       .where((e) => e.isNotEmpty)
                       .toList();
-                  if (options.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Пожалуйста, добавьте опции для выпадающего списка.')),
-                    );
-                    return;
-                  }
+                  // Опции могут быть пустыми, разрешаем
                 }
 
                 if (entity.isEmpty || fieldName.isEmpty || fieldLabel.isEmpty) {
@@ -246,12 +242,7 @@ class _DynamicFieldsScreenState extends State<DynamicFieldsScreen> {
                       .map((e) => e.trim())
                       .where((e) => e.isNotEmpty)
                       .toList();
-                  if (options.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Пожалуйста, добавьте опции для выпадающего списка.')),
-                    );
-                    return;
-                  }
+                  // Опции могут быть пустыми, разрешаем
                 }
 
                 if (entity.isEmpty || fieldName.isEmpty || fieldLabel.isEmpty) {

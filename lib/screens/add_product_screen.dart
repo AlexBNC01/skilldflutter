@@ -1,12 +1,11 @@
-// lib/screens/add_product_screen.dart
-
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart'; // <-- Для сканирования штрих-кода
+import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
+import 'package:image_picker/image_picker.dart'; // <-- нужен для выбора изображения
 import '../services/database_service.dart';
 import '../models/product.dart';
 import '../models/dynamic_field.dart';
-import '../models/container_model.dart'; // Импорт модели контейнера
+import '../models/container_model.dart'; 
 import 'dart:convert';
 
 class AddProductScreen extends StatefulWidget {
@@ -19,19 +18,20 @@ class AddProductScreen extends StatefulWidget {
 class _AddProductScreenState extends State<AddProductScreen> {
   final DatabaseService _databaseService = DatabaseService();
   
-  // Контроллеры для стандартных полей
+  // =========== Стандартные поля ============
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _priceController = TextEditingController();
   final TextEditingController _quantityController = TextEditingController();
+  final TextEditingController _barcodeController = TextEditingController(); // Для штрих-кода
 
-  // Добавляем контроллер для штрих-кода
-  final TextEditingController _barcodeController = TextEditingController();
-
-  // Динамические поля
+  // =========== Динамические поля ============
   List<DynamicField> _dynamicFields = [];
   final Map<String, TextEditingController> _dynamicControllers = {};
 
-  // Для выбора контейнера
+  // =========== Фото ============
+  List<String> _imagePaths = []; // Список путей к локальным фото
+
+  // =========== Контейнер ============
   List<WarehouseContainer> _availableContainers = [];
   int? _selectedContainerId;
 
@@ -42,7 +42,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     _loadContainers();
   }
 
-  // Загрузка динамических полей для продуктов
+  // Загрузка динамических полей (entity = 'products')
   Future<void> _loadDynamicFields() async {
     final fields = await _databaseService.getDynamicFields('products');
     setState(() {
@@ -53,7 +53,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     });
   }
 
-  // Загрузка доступных контейнеров из базы данных
+  // Загрузка контейнеров
   Future<void> _loadContainers() async {
     final containers = await _databaseService.getContainers();
     setState(() {
@@ -61,26 +61,46 @@ class _AddProductScreenState extends State<AddProductScreen> {
     });
   }
 
-  // Метод для вызова сканера штрих-кодов
+  // =========== Сканирование штрих-кода ============
   Future<void> _scanBarcode() async {
     try {
-      // Константа для цвета окна сканирования (можно настроить другой)
       const scanColor = '#ff6666';
-
-      // Запуск сканера (при отмене вернётся '-1')
       final barcodeScanRes = await FlutterBarcodeScanner.scanBarcode(
-        scanColor,         // Цвет окна сканирования
-        'Отмена',          // Текст кнопки отмены
-        true,              // Показывать вспышку
-        ScanMode.BARCODE,  // Режим сканирования (BARCODE / QRCODE)
+        scanColor,
+        'Отмена',
+        true,
+        ScanMode.BARCODE,
       );
-
-      // Если не отменили, то barcodeScanRes != '-1'
       if (!mounted) return;
+
       if (barcodeScanRes != '-1') {
         setState(() {
           _barcodeController.text = barcodeScanRes;
         });
+        // Попробуем найти товар с таким штрих-кодом
+        final existingProduct = await _databaseService.getProductByBarcode(barcodeScanRes);
+        if (existingProduct != null) {
+          // Заполняем поля из существующего товара
+          setState(() {
+            _nameController.text = existingProduct.name;
+            _priceController.text = existingProduct.price.toString();
+            _quantityController.text = existingProduct.quantity.toString();
+            _selectedContainerId = existingProduct.containerId;
+
+            // Если у товара уже есть фото, распарсим их в _imagePaths
+            if (existingProduct.imagePaths != null && existingProduct.imagePaths!.isNotEmpty) {
+              _imagePaths = existingProduct.imagePaths!.split(',');
+            }
+
+            // Заполняем динамические поля, если совпадают ключи
+            final existingDyn = existingProduct.dynamicFields ?? {};
+            existingDyn.forEach((k, v) {
+              if (_dynamicControllers.containsKey(k)) {
+                _dynamicControllers[k]!.text = v.toString();
+              }
+            });
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -91,9 +111,21 @@ class _AddProductScreenState extends State<AddProductScreen> {
     }
   }
 
-  // Метод для отправки данных продукта
+  // =========== Выбор изображения из галереи ============
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    if (!mounted) return;
+    if (pickedFile != null) {
+      setState(() {
+        _imagePaths.add(pickedFile.path);
+      });
+    }
+  }
+
+  // =========== Сохранение товара ============
   Future<void> _submitProduct() async {
-    // Валидация обязательных полей
+    // Проверяем обязательные поля
     if (_nameController.text.isEmpty ||
         _priceController.text.isEmpty ||
         _quantityController.text.isEmpty ||
@@ -108,24 +140,30 @@ class _AddProductScreenState extends State<AddProductScreen> {
     final dynamicValues = <String, dynamic>{};
     for (var field in _dynamicFields) {
       if (field.fieldType == 'dropdown') {
-        dynamicValues[field.fieldName] = _dynamicControllers[field.fieldName]?.text.trim() ?? '';
+        dynamicValues[field.fieldName] =
+            _dynamicControllers[field.fieldName]?.text.trim() ?? '';
       } else if (field.fieldType == 'number') {
         dynamicValues[field.fieldName] = int.tryParse(
           _dynamicControllers[field.fieldName]?.text.trim() ?? '',
         );
       } else {
-        dynamicValues[field.fieldName] = _dynamicControllers[field.fieldName]?.text.trim() ?? '';
+        dynamicValues[field.fieldName] =
+            _dynamicControllers[field.fieldName]?.text.trim() ?? '';
       }
     }
 
-    // Создание объекта продукта
+    // Создаём объект Product
     final product = Product(
       name: _nameController.text.trim(),
       price: double.parse(_priceController.text.trim()),
       quantity: int.parse(_quantityController.text.trim()),
       containerId: _selectedContainerId!,
-      // Добавляем штрих-код (если пустой, то null)
-      barcode: _barcodeController.text.isNotEmpty ? _barcodeController.text.trim() : null,
+      // barcode (если пусто => null)
+      barcode: _barcodeController.text.isNotEmpty
+          ? _barcodeController.text.trim()
+          : null,
+      // Склеиваем пути в одну строку, разделяя запятыми
+      imagePaths: _imagePaths.isEmpty ? null : _imagePaths.join(','),
       dynamicFields: dynamicValues,
     );
 
@@ -134,7 +172,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Товар добавлен')),
       );
-      Navigator.pop(context, true); // Возвращаем true для обновления списка товаров
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ошибка при добавлении товара: $e')),
@@ -152,7 +192,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
         padding: const EdgeInsets.all(16.0),
         child: ListView(
           children: [
-            // Поле для ввода штрих-кода + кнопка сканирования
+            // ========== Штрих-код + кнопка сканирования ==========
             Row(
               children: [
                 Expanded(
@@ -166,32 +206,36 @@ class _AddProductScreenState extends State<AddProductScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.camera_alt),
-                  onPressed: _scanBarcode, // Запуск метода сканирования
+                  onPressed: _scanBarcode,
                 ),
               ],
             ),
             const SizedBox(height: 10),
-            // Название товара
+
+            // ========== Название ==========
             TextField(
               controller: _nameController,
               decoration: const InputDecoration(labelText: 'Название *'),
             ),
             const SizedBox(height: 10),
-            // Цена
+
+            // ========== Цена ==========
             TextField(
               controller: _priceController,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(labelText: 'Цена *'),
             ),
             const SizedBox(height: 10),
-            // Количество
+
+            // ========== Количество ==========
             TextField(
               controller: _quantityController,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'Количество *'),
             ),
             const SizedBox(height: 10),
-            // Выбор контейнера
+
+            // ========== Контейнер ==========
             DropdownButtonFormField<int>(
               value: _selectedContainerId,
               hint: const Text('Выберите контейнер *'),
@@ -208,7 +252,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
               },
             ),
             const SizedBox(height: 20),
-            // Динамические поля
+
+            // ========== Динамические поля ==========
             const Text(
               'Дополнительные Поля',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -216,6 +261,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
             const SizedBox(height: 10),
             ..._dynamicFields.map((field) {
               if (field.fieldType == 'dropdown') {
+                // Поле выпадающего списка
                 return DropdownButtonFormField<String>(
                   decoration: InputDecoration(labelText: field.fieldLabel),
                   items: field.options != null
@@ -231,19 +277,70 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   },
                 );
               } else if (field.fieldType == 'number') {
+                // Поле ввода числа
                 return TextField(
                   controller: _dynamicControllers[field.fieldName],
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(labelText: field.fieldLabel),
                 );
               } else {
+                // Текстовое поле
                 return TextField(
                   controller: _dynamicControllers[field.fieldName],
                   decoration: InputDecoration(labelText: field.fieldLabel),
                 );
               }
             }).toList(),
+
             const SizedBox(height: 20),
+
+            // ========== Блок добавления фото ==========
+            Text(
+              'Фотографии:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            // Показываем превью добавленных фото
+            Wrap(
+              spacing: 8.0,
+              runSpacing: 8.0,
+              children: _imagePaths.map((path) {
+                return Stack(
+                  children: [
+                    Image.file(
+                      File(path),
+                      width: 80,
+                      height: 80,
+                      fit: BoxFit.cover,
+                    ),
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _imagePaths.remove(path);
+                          });
+                        },
+                        child: const CircleAvatar(
+                          radius: 12,
+                          backgroundColor: Colors.red,
+                          child: Icon(Icons.close, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    )
+                  ],
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton.icon(
+              onPressed: _pickImage,
+              icon: const Icon(Icons.add_a_photo),
+              label: const Text('Добавить фото'),
+            ),
+
+            const SizedBox(height: 30),
             ElevatedButton(
               onPressed: _submitProduct,
               child: const Text('Сохранить Товар'),
