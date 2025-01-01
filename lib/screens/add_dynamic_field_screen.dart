@@ -1,7 +1,8 @@
 // lib/screens/add_dynamic_field_screen.dart
+
 import 'package:flutter/material.dart';
 import '../services/database_service.dart';
-import '../models/dynamic_field.dart'; // Импорт модели DynamicField
+import '../models/dynamic_field.dart';
 
 class AddDynamicFieldScreen extends StatefulWidget {
   const AddDynamicFieldScreen({Key? key}) : super(key: key);
@@ -12,125 +13,211 @@ class AddDynamicFieldScreen extends StatefulWidget {
 
 class _AddDynamicFieldScreenState extends State<AddDynamicFieldScreen> {
   final DatabaseService _db = DatabaseService();
-  final TextEditingController _fieldNameController = TextEditingController();
-  final TextEditingController _fieldLabelController = TextEditingController();
-  final TextEditingController _optionsController = TextEditingController();
-  String _selectedEntity = 'products';
-  String _selectedFieldType = 'text';
+  final _formKey = GlobalKey<FormState>();
+
+  String _entity = 'products';
+  String _fieldName = '';
+  String _fieldLabel = '';
+  String _fieldType = 'text';
+  String? _module;
+  List<String> _options = [];
+
+  final TextEditingController _optionController = TextEditingController();
+
+  void _addOption() {
+    final option = _optionController.text.trim();
+    if (option.isNotEmpty && !_options.contains(option)) {
+      setState(() {
+        _options.add(option);
+      });
+      _optionController.clear();
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_formKey.currentState!.validate()) {
+      final dynamicField = DynamicField(
+        entity: _entity,
+        fieldName: _fieldName,
+        fieldLabel: _fieldLabel,
+        fieldType: _fieldType,
+        module: _module,
+        options: _fieldType == 'dropdown' ? _options : null,
+      );
+
+      try {
+        await _db.insertDynamicField(dynamicField);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Динамическое поле добавлено')),
+        );
+        Navigator.pop(context, true);
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка при добавлении поля: $e')),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _optionController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Добавить динамическое поле')),
+      appBar: AppBar(
+        title: Text('Добавить Динамическое Поле'),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            // Выбор сущности (продукты или расходы)
-            DropdownButtonFormField<String>(
-              value: _selectedEntity,
-              items: const [
-                DropdownMenuItem(value: 'products', child: Text('Продукты')),
-                DropdownMenuItem(value: 'expenses', child: Text('Расходы')),
-              ],
-              onChanged: (value) {
-                if (value != null) {
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              // Поле выбора сущности
+              DropdownButtonFormField<String>(
+                value: _entity,
+                items: [
+                  DropdownMenuItem(value: 'products', child: Text('Продукты')),
+                  DropdownMenuItem(value: 'expenses', child: Text('Расходы')),
+                  // Добавьте другие сущности по необходимости
+                ],
+                onChanged: (value) {
                   setState(() {
-                    _selectedEntity = value;
+                    _entity = value!;
                   });
-                }
-              },
-              decoration: const InputDecoration(labelText: 'Сущность'),
-            ),
-            const SizedBox(height: 10),
-            // Ввод имени поля
-            TextField(
-              controller: _fieldNameController,
-              decoration: const InputDecoration(labelText: 'Имя поля'),
-            ),
-            const SizedBox(height: 10),
-            // Ввод метки поля
-            TextField(
-              controller: _fieldLabelController,
-              decoration: const InputDecoration(labelText: 'Метка поля'),
-            ),
-            const SizedBox(height: 10),
-            // Выбор типа поля
-            DropdownButtonFormField<String>(
-              value: _selectedFieldType,
-              items: const [
-                DropdownMenuItem(value: 'text', child: Text('Текст')),
-                DropdownMenuItem(value: 'number', child: Text('Число')),
-                DropdownMenuItem(value: 'dropdown', child: Text('Выпадающий список')),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() {
-                    _selectedFieldType = value;
-                  });
-                }
-              },
-              decoration: const InputDecoration(labelText: 'Тип поля'),
-            ),
-            // Если выбран тип "Выпадающий список", отображаем поле для ввода опций
-            if (_selectedFieldType == 'dropdown') ...[
-              const SizedBox(height: 10),
-              TextField(
-                controller: _optionsController,
-                decoration: const InputDecoration(
-                  labelText: 'Опции (через запятую)',
+                },
+                decoration: InputDecoration(
+                  labelText: 'Сущность',
+                  border: OutlineInputBorder(),
                 ),
               ),
+              SizedBox(height: 16.0),
+
+              // Поле имени
+              TextFormField(
+                decoration: InputDecoration(
+                  labelText: 'Имя поля',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Пожалуйста, введите имя поля';
+                  }
+                  return null;
+                },
+                onChanged: (value) {
+                  _fieldName = value.trim();
+                },
+              ),
+              SizedBox(height: 16.0),
+
+              // Поле метки
+              TextFormField(
+                decoration: InputDecoration(
+                  labelText: 'Метка поля',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Пожалуйста, введите метку поля';
+                  }
+                  return null;
+                },
+                onChanged: (value) {
+                  _fieldLabel = value.trim();
+                },
+              ),
+              SizedBox(height: 16.0),
+
+              // Поле типа
+              DropdownButtonFormField<String>(
+                value: _fieldType,
+                items: [
+                  DropdownMenuItem(value: 'text', child: Text('Текст')),
+                  DropdownMenuItem(value: 'number', child: Text('Число')),
+                  DropdownMenuItem(value: 'dropdown', child: Text('Выпадающий список')),
+                  // Добавьте другие типы по необходимости
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _fieldType = value!;
+                    if (_fieldType != 'dropdown') {
+                      _options.clear();
+                    }
+                  });
+                },
+                decoration: InputDecoration(
+                  labelText: 'Тип поля',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              SizedBox(height: 16.0),
+
+              // Поле модуля (опционально)
+              TextFormField(
+                decoration: InputDecoration(
+                  labelText: 'Модуль (опционально)',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (value) {
+                  _module = value.trim().isEmpty ? null : value.trim();
+                },
+              ),
+              SizedBox(height: 16.0),
+
+              // Поля опций для dropdown
+              if (_fieldType == 'dropdown') ...[
+                Text(
+                  'Опции:',
+                  style: TextStyle(fontSize: 16.0, fontWeight: FontWeight.bold),
+                ),
+                SizedBox(height: 8.0),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _optionController,
+                        decoration: InputDecoration(
+                          labelText: 'Добавить опцию',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 8.0),
+                    IconButton(
+                      icon: Icon(Icons.add),
+                      onPressed: _addOption,
+                    ),
+                  ],
+                ),
+                SizedBox(height: 8.0),
+                Wrap(
+                  spacing: 8.0,
+                  children: _options
+                      .map((option) => Chip(
+                            label: Text(option),
+                            onDeleted: () {
+                              setState(() {
+                                _options.remove(option);
+                              });
+                            },
+                          ))
+                      .toList(),
+                ),
+                SizedBox(height: 16.0),
+              ],
+
+              // Кнопка отправки
+              ElevatedButton(
+                onPressed: _submit,
+                child: Text('Добавить поле'),
+              ),
             ],
-            const SizedBox(height: 20),
-            // Кнопка для добавления динамического поля
-            ElevatedButton(
-              onPressed: () async {
-                final fieldName = _fieldNameController.text.trim();
-                final fieldLabel = _fieldLabelController.text.trim();
-                final optionsText = _optionsController.text.trim();
-                final options = optionsText.isNotEmpty
-                    ? optionsText.split(',').map((e) => e.trim()).toList()
-                    : null;
-
-                // Проверка обязательных полей
-                if (fieldName.isEmpty || fieldLabel.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Заполните все обязательные поля')),
-                  );
-                  return;
-                }
-
-                // Создание объекта DynamicField
-                final dynamicField = DynamicField(
-                  entity: _selectedEntity,
-                  fieldName: fieldName,
-                  fieldLabel: fieldLabel,
-                  fieldType: _selectedFieldType,
-                  options: _selectedFieldType == 'dropdown' ? options : null,
-                );
-
-                try {
-                  // Вставка динамического поля в базу данных
-                  await _db.insertDynamicField(dynamicField);
-
-                  // Отображение уведомления об успешном добавлении
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Динамическое поле добавлено')),
-                  );
-
-                  // Закрытие экрана и возврат к предыдущему с обновлением данных
-                  Navigator.pop(context, true);
-                } catch (e) {
-                  // Обработка ошибок при добавлении
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Ошибка при добавлении поля: $e')),
-                  );
-                }
-              },
-              child: const Text('Добавить поле'),
-            ),
-          ],
+          ),
         ),
       ),
     );

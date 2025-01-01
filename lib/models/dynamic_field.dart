@@ -1,14 +1,15 @@
 // lib/models/dynamic_field.dart
+
 import 'dart:convert';
 
 class DynamicField {
   final int? id;
-  final String entity; // 'products' или 'expenses'
+  final String entity; // Например, 'products', 'expenses' и т.д.
   final String fieldName;
   final String fieldLabel;
-  final String fieldType; // 'text', 'number', 'dropdown'
+  final String fieldType; // 'text', 'number', 'dropdown' и т.д.
   final String? module;
-  final List<String>? options; // Для 'dropdown' типа
+  final List<String>? options; // Для dropdown
 
   DynamicField({
     this.id,
@@ -45,4 +46,9 @@ class DynamicField {
           : null,
     );
   }
+
+  String toJson() => json.encode(toMap());
+
+  factory DynamicField.fromJson(String source) =>
+      DynamicField.fromMap(json.decode(source));
 }

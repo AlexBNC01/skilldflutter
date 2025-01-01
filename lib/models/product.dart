@@ -21,6 +21,11 @@ class Product {
   final DateTime? updatedAt;
   Map<String, dynamic>? dynamicFields;
 
+  // Добавлено новое поле
+  final String? categoryName;
+  final String? typeName;
+  final String? techName;
+
   Product({
     this.id,
     required this.name,
@@ -40,6 +45,9 @@ class Product {
     this.createdAt,
     this.updatedAt,
     this.dynamicFields,
+    this.categoryName, // Инициализация нового поля
+    this.typeName,
+    this.techName,
   });
 
   Map<String, dynamic> toMap() {
@@ -65,7 +73,7 @@ class Product {
     };
   }
 
-  static Product fromMap(Map<String, dynamic> map) {
+  factory Product.fromMap(Map<String, dynamic> map) {
     return Product(
       id: map['id'] as int?,
       name: map['name'] as String,
@@ -87,6 +95,9 @@ class Product {
       dynamicFields: map['dynamic_fields'] != null
           ? jsonDecode(map['dynamic_fields']) as Map<String, dynamic>
           : null,
+      categoryName: map['categoryName'] as String?, // Инициализация нового поля
+      typeName: map['typeName'] as String?,
+      techName: map['techName'] as String?,
     );
   }
 

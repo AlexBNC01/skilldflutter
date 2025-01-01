@@ -7,23 +7,25 @@ import '../models/category.dart';
 import '../models/container_model.dart';
 import '../models/product.dart';
 import '../models/expense.dart';
-import '../models/dynamic_field.dart'; // Импорт модели DynamicField
+import '../models/dynamic_field.dart';
+import '../models/inventory_log.dart'; // Убедитесь, что у вас есть эта модель
 
 class DatabaseService {
+  // Singleton Pattern
   static final DatabaseService _instance = DatabaseService._internal();
   factory DatabaseService() => _instance;
   DatabaseService._internal();
 
   Database? _database;
 
+  // Инициализация базы данных
   Future<void> initDB() async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'warehouse.db');
 
     _database = await openDatabase(
       path,
-      version: 26
-      , // Повышаем версию, чтобы сработала новая миграция
+      version: 31, // Обновите версию до 30
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -32,15 +34,14 @@ class DatabaseService {
     await _database!.execute('PRAGMA foreign_keys = ON;');
   }
 
+  // Получение экземпляра базы данных
   Future<Database> get database async {
     if (_database != null) return _database!;
     await initDB();
     return _database!;
   }
 
-  // ============================================
-  // ============  onCreate  ====================
-  // ============================================
+  // Создание таблиц при первом запуске
   Future<void> _onCreate(Database db, int version) async {
     // Создание таблиц
     await db.execute('''
@@ -73,7 +74,7 @@ class DatabaseService {
       );
     ''');
 
-    // ====== ВАЖНО: barcode TEXT без UNIQUE ======
+    // Создание таблицы продуктов без UNIQUE для barcode
     await db.execute('''
       CREATE TABLE products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,6 +135,18 @@ class DatabaseService {
       );
     ''');
 
+    await db.execute('''
+      CREATE TABLE inventory_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        change_type TEXT NOT NULL, -- 'increase' или 'decrease'
+        quantity INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        reason TEXT,
+        FOREIGN KEY(product_id) REFERENCES products(id)
+      );
+    ''');
+
     // Добавление тестовых данных (опционально)
     await db.insert('types', {'name': 'Тип тестовый'});
     await db.insert('techs', {'name': 'Техника тестовая'});
@@ -141,9 +154,7 @@ class DatabaseService {
     await db.insert('categories', {'name': 'Категория тестовая', 'parent_id': null});
   }
 
-  // ============================================
-  // ============  onUpgrade  ===================
-  // ============================================
+  // Миграции базы данных при обновлении версии
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     print('Migrating from version $oldVersion to $newVersion');
 
@@ -160,14 +171,13 @@ class DatabaseService {
     }
 
     if (oldVersion < 15) {
-      // Ранее было так:
-      // await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);');
-      // Теперь удаляем этот индекс (т.к. он уникальный).
+      // Удаляем UNIQUE индекс на barcode, если он существует
       print('Removing UNIQUE index idx_products_barcode on products(barcode)');
       await db.execute('DROP INDEX IF EXISTS idx_products_barcode');
     }
 
-    if (oldVersion < 16) { // Новая миграция для таблицы expenses до версии 16
+    if (oldVersion < 16) {
+      // Добавляем новые столбцы в таблицу expenses
       await db.execute('ALTER TABLE expenses ADD COLUMN category_id INTEGER;');
       print('Added column category_id to expenses');
 
@@ -181,23 +191,18 @@ class DatabaseService {
       print('Added column container_id to expenses');
     }
 
-    if (oldVersion < 18) { // Миграция для версии 18
+    if (oldVersion < 18) {
       await db.execute('ALTER TABLE expenses ADD COLUMN barcode TEXT;');
       print('Added column barcode to expenses');
     }
 
-    // === Примерно на 21-й версии мы пересоздаём таблицу products без UNIQUE.
     if (oldVersion < 21) {
-      // Снова: если вы хотите сохранить старые данные, нужен перенос через временную таблицу.
-      // Для простоты — дропаем и создаём заново (ВНИМАНИЕ: УДАЛИТ ВСЕ ТОВАРЫ!)
+      // Пересоздаём таблицу products без UNIQUE
       print('Dropping and recreating products table without UNIQUE constraint on barcode');
 
-      // Удаляем таблицу products целиком (данные исчезнут!)
-      await db.execute('DROP TABLE IF EXISTS products');
-
-      // Заново создаём products уже без UNIQUE
+      // Создание временной таблицы без UNIQUE ограничения
       await db.execute('''
-        CREATE TABLE products (
+        CREATE TABLE products_temp (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
           price REAL NOT NULL,
@@ -222,26 +227,54 @@ class DatabaseService {
           FOREIGN KEY(tech_id) REFERENCES techs(id)
         );
       ''');
-      print('Recreated products table without UNIQUE barcode constraint');
+
+      // Копирование данных из старой таблицы в временную
+      await db.execute('''
+        INSERT INTO products_temp (
+          id, name, price, quantity, container_id, image_paths, category_id, subcategory_id1, subcategory_id2, 
+          type_id, tech_id, display_name, number, barcode, volume, created_at, updated_at, dynamic_fields
+        )
+        SELECT 
+          id, name, price, quantity, container_id, image_paths, category_id, subcategory_id1, subcategory_id2, 
+          type_id, tech_id, display_name, number, barcode, volume, created_at, updated_at, dynamic_fields
+        FROM products;
+      ''');
+
+      // Удаление старой таблицы
+      await db.execute('DROP TABLE products');
+
+      // Переименование временной таблицы в основную
+      await db.execute('ALTER TABLE products_temp RENAME TO products');
+
+      print('Recreated products table without UNIQUE barcode constraint without data loss');
     }
 
-    if (oldVersion < 19) { // Миграция для версии 19 (если необходимо)
-      // Добавьте дополнительные миграции здесь
+    if (oldVersion < 26) {
+      // Создаём таблицу inventory_logs
+      await db.execute('''
+        CREATE TABLE inventory_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_id INTEGER NOT NULL,
+          change_type TEXT NOT NULL, -- 'increase' или 'decrease'
+          quantity INTEGER NOT NULL,
+          date TEXT NOT NULL,
+          reason TEXT,
+          FOREIGN KEY(product_id) REFERENCES products(id)
+        );
+      ''');
+      print('Created inventory_logs table');
+    }
+
+    if (oldVersion < 27) {
+      // Добавьте дополнительные миграции здесь, если есть
     }
 
     print('Migration completed');
   }
 
   // ==========================
-  // Методы для типов, техников,
-  // контейнеров, категорий, продуктов и т.д.
-  // ==========================
-
-  // Ниже методы без изменений, кроме тех, где мы
-  // удаляем или не создаём UNIQUE INDEX на barcode
-  // --------------------------------------------
-
   // Методы для типов
+  // ==========================
   Future<List<Category>> getTypes() async {
     final db = await database;
     try {
@@ -276,7 +309,9 @@ class DatabaseService {
     }
   }
 
+  // ==========================
   // Методы для техников
+  // ==========================
   Future<List<Category>> getTechs() async {
     final db = await database;
     try {
@@ -311,7 +346,9 @@ class DatabaseService {
     }
   }
 
+  // ==========================
   // Методы для контейнеров
+  // ==========================
   Future<List<WarehouseContainer>> getContainers() async {
     final db = await database;
     try {
@@ -346,7 +383,9 @@ class DatabaseService {
     }
   }
 
+  // ==========================
   // Методы для категорий
+  // ==========================
   Future<List<Category>> getCategories() async {
     final db = await database;
     try {
@@ -381,62 +420,90 @@ class DatabaseService {
     }
   }
 
+  // ==========================
   // Методы для продуктов
-  Future<List<Product>> getProducts({int? containerId}) async {
+  // ==========================
+  Future<List<Product>> getProducts({
+    String? searchQuery,
+    String? category,
+    String? supplier, // Если хранится в dynamic_fields
+    DateTime? startDate,
+    DateTime? endDate,
+    int? containerId, // Добавленный параметр
+    Map<String, dynamic>? dynamicFilters,
+  }) async {
     final db = await database;
     try {
-      List<Map<String, dynamic>> result;
+      List<String> whereClauses = [];
+      List<dynamic> whereArgs = [];
 
-      if (containerId != null) {
-        result = await db.query(
-          'products',
-          where: 'container_id = ?',
-          whereArgs: [containerId],
-        );
-      } else {
-        result = await db.query('products');
+      // Поиск по названию товара
+      if (searchQuery != null && searchQuery.isNotEmpty) {
+        whereClauses.add('products.name LIKE ?');
+        whereArgs.add('%$searchQuery%');
       }
 
-      print('Products fetched: $result');
+      // Фильтрация по категории
+      if (category != null && category.isNotEmpty) {
+        whereClauses.add('categories.name = ?');
+        whereArgs.add(category);
+      }
+
+      // Фильтрация по поставщику (из dynamic_fields)
+      if (supplier != null && supplier.isNotEmpty) {
+        whereClauses.add('products.dynamic_fields LIKE ?');
+        whereArgs.add('%"supplier":"$supplier"%');
+      }
+
+      // Фильтрация по container_id
+      if (containerId != null) {
+        whereClauses.add('products.container_id = ?');
+        whereArgs.add(containerId);
+      }
+
+      // Фильтрация по дате (например, created_at)
+      if (startDate != null && endDate != null) {
+        whereClauses.add('products.created_at BETWEEN ? AND ?');
+        whereArgs.add(startDate.toIso8601String());
+        whereArgs.add(endDate.toIso8601String());
+      }
+
+      // Фильтрация по динамическим полям
+      if (dynamicFilters != null && dynamicFilters.isNotEmpty) {
+        dynamicFilters.forEach((key, value) {
+          if (value != null) {
+            whereClauses.add('products.dynamic_fields LIKE ?');
+            whereArgs.add('%"$key":"$value"%');
+          }
+        });
+      }
+
+      // Формирование WHERE строки
+      String whereString = whereClauses.isNotEmpty
+          ? whereClauses.join(' AND ')
+          : '1=1'; // Используем '1=1' для валидного SQL-запроса
+
+      print('getProducts: Query executed with whereString: $whereString and whereArgs: $whereArgs'); // Логирование
+
+      // Выполнение запроса с соединениями
+      final result = await db.rawQuery('''
+        SELECT 
+          products.*, 
+          categories.name AS categoryName,
+          types.name AS typeName,
+          techs.name AS techName
+        FROM products
+        LEFT JOIN categories ON products.category_id = categories.id
+        LEFT JOIN types ON products.type_id = types.id
+        LEFT JOIN techs ON products.tech_id = techs.id
+        WHERE $whereString
+        ORDER BY products.created_at DESC
+      ''', whereArgs);
+
       return result.map((map) => Product.fromMap(map)).toList();
     } catch (e) {
       print('Error fetching products: $e');
       return [];
-    }
-  }
-
-  // ======== insertProduct без UNIQUE ========
-  Future<int> insertProduct(Product product) async {
-    final db = await database;
-    final productMap = product.toMap();
-    productMap['dynamic_fields'] = _mapToJson(product.dynamicFields ?? {});
-    try {
-      final id = await db.insert('products', productMap);
-      print('Product inserted with id: $id');
-      return id;
-    } catch (e) {
-      print('Error inserting product: $e');
-      rethrow;
-    }
-  }
-
-  Future<Product?> getProductById(int id) async {
-    final db = await database;
-    try {
-      final result = await db.query(
-        'products',
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-
-      if (result.isNotEmpty) {
-        print('Product fetched: ${result.first}');
-        return Product.fromMap(result.first);
-      }
-      return null;
-    } catch (e) {
-      print('Error fetching product by id: $e');
-      return null;
     }
   }
 
@@ -460,41 +527,23 @@ class DatabaseService {
     }
   }
 
-  Future<void> updateProduct(Product product) async {
-    final db = await database;
-    final productMap = product.toMap();
-    productMap['dynamic_fields'] = _mapToJson(product.dynamicFields ?? {});
-    try {
-      await db.update('products', productMap, where: 'id = ?', whereArgs: [product.id]);
-      print('Product updated with id: ${product.id}');
-    } catch (e) {
-      print('Error updating product: $e');
-      rethrow;
-    }
-  }
-
-  Future<void> deleteProduct(int id) async {
+  Future<Product?> getProductById(int id) async {
     final db = await database;
     try {
-      await db.delete('products', where: 'id = ?', whereArgs: [id]);
-      print('Product deleted with id: $id');
-    } catch (e) {
-      print('Error deleting product: $e');
-    }
-  }
-
-  Future<void> updateProductQuantity(int id, int newQuantity) async {
-    final db = await database;
-    try {
-      await db.update(
+      final result = await db.query(
         'products',
-        {'quantity': newQuantity},
         where: 'id = ?',
         whereArgs: [id],
       );
-      print('Product quantity updated for id: $id to $newQuantity');
+
+      if (result.isNotEmpty) {
+        print('Product fetched by id: ${result.first}');
+        return Product.fromMap(result.first);
+      }
+      return null;
     } catch (e) {
-      print('Error updating product quantity: $e');
+      print('Error fetching product by id: $e');
+      return null;
     }
   }
 
@@ -538,7 +587,109 @@ class DatabaseService {
     }
   }
 
+  Future<int> insertProduct(Product product) async {
+    final db = await database;
+    final productMap = product.toMap();
+    try {
+      print('Attempting to insert product: $productMap');
+      final id = await db.insert('products', productMap);
+      print('Product inserted with id: $id');
+      return id;
+    } catch (e) {
+      print('Error inserting product: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateProduct(Product product) async {
+    final db = await database;
+    final productMap = product.toMap();
+    productMap['dynamic_fields'] = _mapToJson(product.dynamicFields ?? {});
+    try {
+      await db.update('products', productMap, where: 'id = ?', whereArgs: [product.id]);
+      print('Product updated with id: ${product.id}');
+    } catch (e) {
+      print('Error updating product: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteProduct(int id) async {
+    final db = await database;
+    try {
+      await db.delete('products', where: 'id = ?', whereArgs: [id]);
+      print('Product deleted with id: $id');
+    } catch (e) {
+      print('Error deleting product: $e');
+      rethrow;
+    }
+  }
+
+  // ==========================
+  // Методы для динамических полей
+  // ==========================
+  Future<List<DynamicField>> getDynamicFields(String entity) async {
+    final db = await database;
+    try {
+      final result = await db.query(
+        'dynamic_fields',
+        where: 'entity = ?',
+        whereArgs: [entity],
+      );
+      print('Dynamic fields fetched for entity $entity: $result');
+      return result.map((map) => DynamicField.fromMap(map)).toList();
+    } catch (e) {
+      print('Error fetching dynamic fields: $e');
+      return [];
+    }
+  }
+
+  Future<int> insertDynamicField(DynamicField dynamicField) async {
+    final db = await database;
+    try {
+      final id = await db.insert('dynamic_fields', dynamicField.toMap());
+      print('Dynamic field inserted with id: $id');
+      return id;
+    } catch (e) {
+      print('Error inserting dynamic field: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateDynamicField(DynamicField dynamicField) async {
+    final db = await database;
+    try {
+      await db.update(
+        'dynamic_fields',
+        dynamicField.toMap(),
+        where: 'id = ?',
+        whereArgs: [dynamicField.id],
+      );
+      print('Dynamic field updated with id: ${dynamicField.id}');
+    } catch (e) {
+      print('Error updating dynamic field: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteDynamicField(int id) async {
+    final db = await database;
+    try {
+      await db.delete(
+        'dynamic_fields',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      print('Dynamic field deleted with id: $id');
+    } catch (e) {
+      print('Error deleting dynamic field: $e');
+      rethrow;
+    }
+  }
+
+  // ==========================
   // Методы для расходов
+  // ==========================
   Future<int> insertExpense(Expense expense) async {
     final db = await database;
     final expenseMap = expense.toMap();
@@ -605,71 +756,129 @@ class DatabaseService {
       print('Expense deleted with id: $id');
     } catch (e) {
       print('Error deleting expense: $e');
+      rethrow;
     }
   }
 
-  // Методы для динамических полей
-  Future<int> insertDynamicField(DynamicField dynamicField) async {
+  // ==========================
+  // Методы для Inventory Logs
+  // ==========================
+  Future<int> insertInventoryLog(InventoryLog log) async {
     final db = await database;
     try {
-      final id = await db.insert('dynamic_fields', dynamicField.toMap());
-      print('Dynamic field inserted with id: $id');
+      final id = await db.insert('inventory_logs', log.toMap());
+      print('Inventory log inserted with id: $id');
       return id;
     } catch (e) {
-      print('Error inserting dynamic field: $e');
+      print('Error inserting inventory log: $e');
       rethrow;
     }
   }
 
-  Future<void> updateDynamicField(DynamicField dynamicField) async {
+  Future<List<InventoryLog>> getInventoryLogs({int? productId}) async {
     final db = await database;
     try {
-      await db.update(
-        'dynamic_fields',
-        dynamicField.toMap(),
-        where: 'id = ?',
-        whereArgs: [dynamicField.id],
-      );
-      print('Dynamic field updated with id: ${dynamicField.id}');
-    } catch (e) {
-      print('Error updating dynamic field: $e');
-      rethrow;
-    }
-  }
+      List<Map<String, dynamic>> result;
 
-  Future<void> deleteDynamicField(int id) async {
-    final db = await database;
-    try {
-      await db.delete(
-        'dynamic_fields',
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-      print('Dynamic field deleted with id: $id');
-    } catch (e) {
-      print('Error deleting dynamic field: $e');
-      rethrow;
-    }
-  }
+      if (productId != null) {
+        result = await db.query(
+          'inventory_logs',
+          where: 'product_id = ?',
+          whereArgs: [productId],
+        );
+      } else {
+        result = await db.query('inventory_logs');
+      }
 
-  Future<List<DynamicField>> getDynamicFields(String entity) async {
-    final db = await database;
-    try {
-      final result = await db.query(
-        'dynamic_fields',
-        where: 'entity = ?',
-        whereArgs: [entity],
-      );
-      print('Dynamic fields fetched for entity $entity: $result');
-      return result.map((map) => DynamicField.fromMap(map)).toList();
+      print('Inventory logs fetched: $result');
+      return result.map((map) => InventoryLog.fromMap(map)).toList();
     } catch (e) {
-      print('Error fetching dynamic fields: $e');
+      print('Error fetching inventory logs: $e');
       return [];
     }
   }
 
+  // ==========================
   // Метод сериализации динамических полей
+  // ==========================
   String _mapToJson(Map<String, dynamic> map) {
     return jsonEncode(map);
+  }
+
+  // ==========================
+  // Метод для получения списка уникальных поставщиков из динамических полей
+  // ==========================
+  Future<List<String>> getSuppliers() async {
+    final db = await database;
+    try {
+      final result = await db.rawQuery(
+          'SELECT dynamic_fields FROM products WHERE dynamic_fields LIKE ?', ['%"supplier":"%']);
+      final suppliers = <String>{};
+
+      for (var row in result) {
+        final dynamicFields = row['dynamic_fields'] as String?;
+        if (dynamicFields != null) {
+          final Map<String, dynamic> fieldsMap = jsonDecode(dynamicFields);
+          if (fieldsMap.containsKey('supplier')) {
+            final supplier = fieldsMap['supplier'];
+            if (supplier is String && supplier.isNotEmpty) {
+              suppliers.add(supplier);
+            }
+          }
+        }
+      }
+
+      return suppliers.toList();
+    } catch (e) {
+      print('Error fetching suppliers: $e');
+      return [];
+    }
+  }
+
+  // ==========================
+  // Добавление метода updateProductQuantity
+  // ==========================
+  /// Обновляет количество продукта по его [productId].
+  /// [newQuantity] — новое количество для продукта.
+  Future<void> updateProductQuantity(int productId, int newQuantity) async {
+    final db = await database;
+    try {
+      final count = await db.update(
+        'products',
+        {
+          'quantity': newQuantity,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [productId],
+      );
+      if (count == 0) {
+        throw Exception('Продукт с id $productId не найден.');
+      }
+      print('Количество продукта с id $productId обновлено до $newQuantity.');
+    } catch (e) {
+      print('Ошибка при обновлении количества продукта: $e');
+      rethrow;
+    }
+  }
+
+  // ==========================
+  // Метод для проверки существования контейнера
+  // ==========================
+  Future<bool> containerExists(int containerId) async {
+    final db = await database;
+    try {
+      final result = await db.query(
+        'containers',
+        where: 'id = ?',
+        whereArgs: [containerId],
+      );
+      bool exists = result.isNotEmpty;
+      print('Container with id $containerId exists: $exists');
+      return exists;
+    } catch (e) {
+      print('Error checking if container exists: $e');
+      return false;
+    }
   }
 }
