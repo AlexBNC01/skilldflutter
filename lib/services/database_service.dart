@@ -25,7 +25,7 @@ class DatabaseService {
 
     _database = await openDatabase(
       path,
-      version: 31, // Обновите версию до 30
+      version: 31, // Обновите версию до 31
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -70,7 +70,7 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         parent_id INTEGER,
-        FOREIGN KEY(parent_id) REFERENCES categories(id)
+        FOREIGN KEY(parent_id) REFERENCES categories(id) ON DELETE CASCADE
       );
     ''');
 
@@ -95,13 +95,14 @@ class DatabaseService {
         created_at TEXT,
         updated_at TEXT,
         dynamic_fields TEXT,
-        FOREIGN KEY(container_id) REFERENCES containers(id),
-        FOREIGN KEY(category_id) REFERENCES categories(id),
-        FOREIGN KEY(type_id) REFERENCES types(id),
-        FOREIGN KEY(tech_id) REFERENCES techs(id)
+        FOREIGN KEY(container_id) REFERENCES containers(id) ON DELETE CASCADE,
+        FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE SET NULL,
+        FOREIGN KEY(type_id) REFERENCES types(id) ON DELETE SET NULL,
+        FOREIGN KEY(tech_id) REFERENCES techs(id) ON DELETE SET NULL
       );
     ''');
 
+    // Создание таблицы расходов (expenses) с ON DELETE CASCADE для product_id
     await db.execute('''
       CREATE TABLE expenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,14 +116,15 @@ class DatabaseService {
         tech_id INTEGER,
         container_id INTEGER,
         barcode TEXT,
-        FOREIGN KEY(product_id) REFERENCES products(id),
-        FOREIGN KEY(category_id) REFERENCES categories(id),
-        FOREIGN KEY(type_id) REFERENCES types(id),
-        FOREIGN KEY(tech_id) REFERENCES techs(id),
-        FOREIGN KEY(container_id) REFERENCES containers(id)
+        FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
+        FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE SET NULL,
+        FOREIGN KEY(type_id) REFERENCES types(id) ON DELETE SET NULL,
+        FOREIGN KEY(tech_id) REFERENCES techs(id) ON DELETE SET NULL,
+        FOREIGN KEY(container_id) REFERENCES containers(id) ON DELETE SET NULL
       );
     ''');
 
+    // Создание таблицы динамических полей
     await db.execute('''
       CREATE TABLE dynamic_fields (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,6 +137,7 @@ class DatabaseService {
       );
     ''');
 
+    // Создание таблицы журналов инвентаризации (inventory_logs) с ON DELETE CASCADE для product_id
     await db.execute('''
       CREATE TABLE inventory_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,7 +146,7 @@ class DatabaseService {
         quantity INTEGER NOT NULL,
         date TEXT NOT NULL,
         reason TEXT,
-        FOREIGN KEY(product_id) REFERENCES products(id)
+        FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
       );
     ''');
 
@@ -221,10 +224,10 @@ class DatabaseService {
           created_at TEXT,
           updated_at TEXT,
           dynamic_fields TEXT,
-          FOREIGN KEY(container_id) REFERENCES containers(id),
-          FOREIGN KEY(category_id) REFERENCES categories(id),
-          FOREIGN KEY(type_id) REFERENCES types(id),
-          FOREIGN KEY(tech_id) REFERENCES techs(id)
+          FOREIGN KEY(container_id) REFERENCES containers(id) ON DELETE CASCADE,
+          FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE SET NULL,
+          FOREIGN KEY(type_id) REFERENCES types(id) ON DELETE SET NULL,
+          FOREIGN KEY(tech_id) REFERENCES techs(id) ON DELETE SET NULL
         );
       ''');
 
@@ -250,23 +253,38 @@ class DatabaseService {
     }
 
     if (oldVersion < 26) {
-      // Создаём таблицу inventory_logs
-      await db.execute('''
-        CREATE TABLE inventory_logs (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          product_id INTEGER NOT NULL,
-          change_type TEXT NOT NULL, -- 'increase' или 'decrease'
-          quantity INTEGER NOT NULL,
-          date TEXT NOT NULL,
-          reason TEXT,
-          FOREIGN KEY(product_id) REFERENCES products(id)
-        );
-      ''');
-      print('Created inventory_logs table');
+      // Проверяем, существует ли таблица inventory_logs
+      final tables = await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_logs';");
+      if (tables.isEmpty) {
+        // Создаём таблицу inventory_logs
+        await db.execute('''
+          CREATE TABLE inventory_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            change_type TEXT NOT NULL, -- 'increase' или 'decrease'
+            quantity INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            reason TEXT,
+            FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+          );
+        ''');
+        print('Created inventory_logs table');
+      } else {
+        print('inventory_logs table already exists');
+      }
     }
 
     if (oldVersion < 27) {
       // Добавьте дополнительные миграции здесь, если есть
+      print('No additional migrations for version <27');
+    }
+
+    // Добавьте миграции для версий 28-31, если они существуют
+    if (oldVersion < 31) {
+      // Пример: Добавление новых столбцов или таблиц
+      // await db.execute('ALTER TABLE ...');
+      print('No additional migrations for versions 28-31');
     }
 
     print('Migration completed');
@@ -306,6 +324,7 @@ class DatabaseService {
       print('Type deleted with id: $id');
     } catch (e) {
       print('Error deleting type: $e');
+      rethrow;
     }
   }
 
@@ -343,6 +362,7 @@ class DatabaseService {
       print('Tech deleted with id: $id');
     } catch (e) {
       print('Error deleting tech: $e');
+      rethrow;
     }
   }
 
@@ -380,6 +400,7 @@ class DatabaseService {
       print('Container deleted with id: $id');
     } catch (e) {
       print('Error deleting container: $e');
+      rethrow;
     }
   }
 
@@ -417,6 +438,7 @@ class DatabaseService {
       print('Category deleted with id: $id');
     } catch (e) {
       print('Error deleting category: $e');
+      rethrow;
     }
   }
 
@@ -491,11 +513,13 @@ class DatabaseService {
           products.*, 
           categories.name AS categoryName,
           types.name AS typeName,
-          techs.name AS techName
+          techs.name AS techName,
+          containers.name AS containerName
         FROM products
         LEFT JOIN categories ON products.category_id = categories.id
         LEFT JOIN types ON products.type_id = types.id
         LEFT JOIN techs ON products.tech_id = techs.id
+        LEFT JOIN containers ON products.container_id = containers.id
         WHERE $whereString
         ORDER BY products.created_at DESC
       ''', whereArgs);
@@ -547,7 +571,7 @@ class DatabaseService {
     }
   }
 
-  Future<Map<String, dynamic>?> getProductDetails(int productId) async {
+  Future<Product?> getProductDetails(int productId) async {
     final db = await database;
     try {
       final result = await db.rawQuery('''
@@ -578,7 +602,7 @@ class DatabaseService {
 
       if (result.isNotEmpty) {
         print('Product details fetched: ${result.first}');
-        return result.first;
+        return Product.fromMap(result.first);
       }
       return null;
     } catch (e) {
@@ -603,8 +627,10 @@ class DatabaseService {
 
   Future<void> updateProduct(Product product) async {
     final db = await database;
-    final productMap = product.toMap();
-    productMap['dynamic_fields'] = _mapToJson(product.dynamicFields ?? {});
+    // Исключаем 'id' из обновляемых данных
+    final Map<String, dynamic> productMap = Map.from(product.toMap());
+    productMap.remove('id');
+
     try {
       await db.update('products', productMap, where: 'id = ?', whereArgs: [product.id]);
       print('Product updated with id: ${product.id}');

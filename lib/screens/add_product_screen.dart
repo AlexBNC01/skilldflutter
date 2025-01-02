@@ -5,7 +5,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart'; // Импорт для выбора изображений
-import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart'; // Импорт для сканера штрихкодов
+import 'package:barcode_scan2/barcode_scan2.dart'; // Импорт для сканирования штрих-кода
 import '../services/database_service.dart';
 import '../models/product.dart';
 import '../models/category.dart';
@@ -13,7 +13,9 @@ import '../models/container_model.dart';
 import '../models/dynamic_field.dart';
 
 class AddProductScreen extends StatefulWidget {
-  const AddProductScreen({Key? key}) : super(key: key);
+  final Product? product; // Добавляем параметр product
+
+  const AddProductScreen({Key? key, this.product}) : super(key: key);
 
   @override
   State<AddProductScreen> createState() => _AddProductScreenState();
@@ -44,10 +46,12 @@ class _AddProductScreenState extends State<AddProductScreen> {
   List<String> imagePathsList = [];
 
   bool _isLoading = true;
+  bool _isEditMode = false; // Переменная для режима редактирования
 
   @override
   void initState() {
     super.initState();
+    _isEditMode = widget.product != null;
     _loadInitialData();
   }
 
@@ -71,6 +75,10 @@ class _AddProductScreenState extends State<AddProductScreen> {
         for (var field in _dynamicFields) {
           _dynamicControllers[field.fieldName] = TextEditingController();
         }
+
+        if (_isEditMode && widget.product != null) {
+          _populateFields(widget.product!);
+        }
       });
       print('Начальные данные загружены успешно.');
     } catch (e) {
@@ -81,6 +89,27 @@ class _AddProductScreenState extends State<AddProductScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ошибка загрузки данных: $e')),
       );
+    }
+  }
+
+  void _populateFields(Product product) {
+    _nameController.text = product.name;
+    _priceController.text = product.price.toString();
+    _quantityController.text = product.quantity.toString();
+    _barcodeController.text = product.barcode ?? '';
+    _volumeController.text = product.volume?.toString() ?? '';
+    _selectedCategoryId = product.categoryId;
+    _selectedTypeId = product.typeId;
+    _selectedTechId = product.techId;
+    _selectedContainerId = product.containerId;
+    imagePathsList = product.imagePathsList;
+
+    if (product.dynamicFields != null) {
+      product.dynamicFields!.forEach((key, value) {
+        if (_dynamicControllers.containsKey(key)) {
+          _dynamicControllers[key]!.text = value.toString();
+        }
+      });
     }
   }
 
@@ -107,30 +136,25 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
   Future<void> _scanBarcode() async {
     try {
-      String barcodeScanRes = await FlutterBarcodeScanner.scanBarcode(
-          '#ff6666', // Цвет линии сканера
-          'Отмена', // Текст кнопки отмены
-          true, // Показывать ли всплывающее окно с подсказкой
-          ScanMode.BARCODE // Режим сканирования (BARCODE или QR)
-      );
-
-      if (barcodeScanRes != '-1') { // '-1' означает, что сканирование было отменено
+      print('Начинается сканирование штрих-кода...');
+      var result = await BarcodeScanner.scan();
+      if (result.type == ResultType.Barcode) {
         setState(() {
-          _barcodeController.text = barcodeScanRes;
+          _barcodeController.text = result.rawContent;
         });
-        print('Сканированный штрих-код: $barcodeScanRes');
+        print('Штрих-код сканирован: ${result.rawContent}');
       } else {
-        print('Сканирование отменено пользователем.');
+        print('Сканирование штрих-кода отменено или не удалось.');
       }
     } catch (e) {
-      print('Ошибка при сканировании штрихкода: $e');
+      print('Ошибка при сканировании штрих-кода: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка при сканировании штрихкода: $e')),
+        SnackBar(content: Text('Ошибка при сканировании штрих-кода: $e')),
       );
     }
   }
 
-  Future<void> _addProduct() async {
+  Future<void> _saveProduct() async {
     final String name = _nameController.text.trim();
     final double? price = double.tryParse(_priceController.text.trim());
     final int? quantity = int.tryParse(_quantityController.text.trim());
@@ -139,7 +163,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
         : null;
     final double? volume = double.tryParse(_volumeController.text.trim());
 
-    print('Пытаемся добавить продукт:');
+    print('Пытаемся сохранить продукт:');
     print('Name: $name, Price: $price, Quantity: $quantity, Barcode: $barcode, Volume: $volume');
     print('Selected Category ID: $_selectedCategoryId');
     print('Selected Type ID: $_selectedTypeId');
@@ -192,6 +216,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     String imagePathsString = imagePathsList.join(',');
 
     final Product newProduct = Product(
+      id: _isEditMode ? widget.product!.id : null, // Устанавливаем id при редактировании
       name: name,
       price: price,
       quantity: quantity,
@@ -202,7 +227,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
       typeId: _selectedTypeId,
       techId: _selectedTechId,
       dynamicFields: dynamicValues,
-      createdAt: DateTime.now(),
+      createdAt: _isEditMode ? widget.product!.createdAt : DateTime.now(),
       updatedAt: DateTime.now(),
       imagePaths: imagePathsString, // Преобразование списка в строку
     );
@@ -210,16 +235,24 @@ class _AddProductScreenState extends State<AddProductScreen> {
     print('Созданный объект продукта: ${newProduct.toMap()}');
 
     try {
-      final int insertedId = await _databaseService.insertProduct(newProduct);
-      print('Продукт успешно добавлен с ID: $insertedId');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Продукт добавлен успешно')),
-      );
+      if (_isEditMode) {
+        await _databaseService.updateProduct(newProduct);
+        print('Продукт обновлен успешно');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Продукт обновлен успешно')),
+        );
+      } else {
+        final int insertedId = await _databaseService.insertProduct(newProduct);
+        print('Продукт успешно добавлен с ID: $insertedId');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Продукт добавлен успешно')),
+        );
+      }
       Navigator.pop(context, true); // Возвращаем true для обновления списка продуктов
     } catch (e) {
-      print('Ошибка при добавлении продукта: $e');
+      print('Ошибка при сохранении продукта: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка при добавлении продукта: $e')),
+        SnackBar(content: Text('Ошибка при сохранении продукта: $e')),
       );
     }
   }
@@ -239,7 +272,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Добавить Продукт'),
+        title: Text(_isEditMode ? 'Редактировать Продукт' : 'Добавить Продукт'),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -263,11 +296,33 @@ class _AddProductScreenState extends State<AddProductScreen> {
                             itemBuilder: (context, index) {
                               return Padding(
                                 padding: const EdgeInsets.only(right: 8.0),
-                                child: Image.file(
-                                  File(imagePathsList[index]),
-                                  width: 100,
-                                  height: 100,
-                                  fit: BoxFit.cover,
+                                child: Stack(
+                                  children: [
+                                    Image.file(
+                                      File(imagePathsList[index]),
+                                      width: 100,
+                                      height: 100,
+                                      fit: BoxFit.cover,
+                                    ),
+                                    Positioned(
+                                      right: 0,
+                                      top: 0,
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            imagePathsList.removeAt(index);
+                                          });
+                                        },
+                                        child: Container(
+                                          color: Colors.black54,
+                                          child: Icon(
+                                            Icons.close,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               );
                             },
@@ -305,19 +360,27 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   ),
                   const SizedBox(height: 10),
                   // Штрих-код (необязательно) с кнопкой сканирования
-                  TextField(
-                    controller: _barcodeController,
-                    decoration: InputDecoration(
-                      labelText: 'Штрих-код (необязательно)',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.camera_alt),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _barcodeController,
+                          decoration: const InputDecoration(
+                            labelText: 'Штрих-код (необязательно)',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: 8.0),
+                      IconButton(
+                        icon: Icon(Icons.camera_alt),
                         onPressed: _scanBarcode,
                         tooltip: 'Сканировать штрих-код',
                       ),
-                    ),
+                    ],
                   ),
                   const SizedBox(height: 10),
+
                   // Объём (необязательно)
                   TextField(
                     controller: _volumeController,
@@ -434,11 +497,14 @@ class _AddProductScreenState extends State<AddProductScreen> {
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 10.0),
                         child: DropdownButtonFormField<String>(
-                          isExpanded: true, // Обеспечивает, что выпадающий список занимает всю доступную ширину
-                          icon: const Icon(Icons.arrow_drop_down, size: 24),
+                          decoration: InputDecoration(
+                            labelText: field.fieldLabel,
+                            border: const OutlineInputBorder(),
+                          ),
+                          hint: Text('Выберите ${field.fieldLabel}'),
                           value: controller?.text.isNotEmpty == true ? controller!.text : null,
                           items: [
-                            const DropdownMenuItem(value: null, child: Text('Все')),
+                            DropdownMenuItem(value: null, child: Text('Не выбрано')),
                             ...options.map((String option) {
                               return DropdownMenuItem<String>(
                                 value: option,
@@ -448,15 +514,11 @@ class _AddProductScreenState extends State<AddProductScreen> {
                           ],
                           onChanged: (String? newValue) {
                             if (controller != null) {
-                              controller.text = newValue ?? '';
+                              setState(() {
+                                controller.text = newValue ?? '';
+                              });
                             }
                           },
-                          decoration: InputDecoration(
-                            labelText: field.fieldLabel,
-                            border: const OutlineInputBorder(),
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-                          ),
                         ),
                       );
                     } else if (field.fieldType == 'number') {
@@ -469,8 +531,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
                           decoration: InputDecoration(
                             labelText: field.fieldLabel,
                             border: const OutlineInputBorder(),
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
                           ),
                         ),
                       );
@@ -483,8 +543,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
                           decoration: InputDecoration(
                             labelText: field.fieldLabel,
                             border: const OutlineInputBorder(),
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
                           ),
                         ),
                       );
@@ -492,8 +550,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   }).toList(),
                   const SizedBox(height: 20),
                   ElevatedButton(
-                    onPressed: _addProduct,
-                    child: const Text('Сохранить'),
+                    onPressed: _saveProduct,
+                    child: Text(_isEditMode ? 'Сохранить Изменения' : 'Сохранить'),
                   ),
                 ],
               ),

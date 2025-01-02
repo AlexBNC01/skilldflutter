@@ -1,4 +1,5 @@
 // lib/models/product.dart
+
 import 'dart:convert';
 
 class Product {
@@ -6,14 +7,14 @@ class Product {
   final String name;
   final double price;
   final int quantity;
-  final int containerId;
+  final int? containerId; // Сделано nullable
   final String? imagePaths;
   final int? categoryId;
   final int? subcategoryId1;
   final int? subcategoryId2;
   final String? displayName;
   final String? number;
-  final String? barcode; // Поле теперь nullable
+  final String? barcode; // Nullable
   final double? volume;
   final int? typeId;
   final int? techId;
@@ -21,33 +22,35 @@ class Product {
   final DateTime? updatedAt;
   Map<String, dynamic>? dynamicFields;
 
-  // Добавлено новое поле
+  // Новые поля для отображения имен категорий, типов, техников и контейнера
   final String? categoryName;
   final String? typeName;
   final String? techName;
+  final String? containerName;
 
   Product({
     this.id,
     required this.name,
     required this.price,
     required this.quantity,
-    required this.containerId,
+    this.containerId, // Nullable
     this.imagePaths,
     this.categoryId,
     this.subcategoryId1,
     this.subcategoryId2,
     this.displayName,
     this.number,
-    this.barcode, // Поле теперь необязательное
+    this.barcode,
     this.volume,
     this.typeId,
     this.techId,
     this.createdAt,
     this.updatedAt,
     this.dynamicFields,
-    this.categoryName, // Инициализация нового поля
+    this.categoryName,
     this.typeName,
     this.techName,
+    this.containerName,
   });
 
   Map<String, dynamic> toMap() {
@@ -63,7 +66,7 @@ class Product {
       'subcategory_id2': subcategoryId2,
       'display_name': displayName,
       'number': number,
-      'barcode': barcode, // Может быть null
+      'barcode': barcode,
       'volume': volume,
       'type_id': typeId,
       'tech_id': techId,
@@ -79,25 +82,26 @@ class Product {
       name: map['name'] as String,
       price: (map['price'] as num).toDouble(),
       quantity: map['quantity'] as int,
-      containerId: map['container_id'] as int,
-      imagePaths: map['image_paths'] as String?,
+      containerId: map['container_id'] as int?, // Изменено на nullable
+      imagePaths: map['imagePaths'] as String?,
       categoryId: map['category_id'] as int?,
       subcategoryId1: map['subcategory_id1'] as int?,
       subcategoryId2: map['subcategory_id2'] as int?,
-      displayName: map['display_name'] as String?,
+      displayName: map['displayName'] as String?,
       number: map['number'] as String?,
-      barcode: map['barcode'] as String?, // Nullable
+      barcode: map['barcode'] as String?,
       volume: map['volume'] != null ? (map['volume'] as num).toDouble() : null,
       typeId: map['type_id'] as int?,
       techId: map['tech_id'] as int?,
-      createdAt: map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
-      updatedAt: map['updated_at'] != null ? DateTime.parse(map['updated_at']) : null,
-      dynamicFields: map['dynamic_fields'] != null
-          ? jsonDecode(map['dynamic_fields']) as Map<String, dynamic>
+      createdAt: map['createdAt'] != null ? DateTime.parse(map['createdAt']) : null,
+      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : null,
+      dynamicFields: map['dynamicFields'] != null
+          ? jsonDecode(map['dynamicFields']) as Map<String, dynamic>
           : null,
-      categoryName: map['categoryName'] as String?, // Инициализация нового поля
+      categoryName: map['categoryName'] as String?,
       typeName: map['typeName'] as String?,
       techName: map['techName'] as String?,
+      containerName: map['containerName'] as String?, // Добавлено маппирование
     );
   }
 
